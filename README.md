@@ -1,4 +1,5 @@
 # AI-Driven Narrative Pipeline
+![image_showing_model_architechture](./kukufm.png)
 ## A hierarchical, iterative approach to narrative construction:
 
 ### Layered Story Architecture: 
