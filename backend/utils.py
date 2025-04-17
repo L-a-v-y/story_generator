@@ -20,6 +20,73 @@ llm = ChatOpenAI(model=settings.LLM_MODEL, temperature=0.7)
 
 # --- Helper Functions ---
 
+def regenerate_title_from_outline(concept: str, mainoutline: str, previous_title: str, user_feedback: str):
+    """
+    Regenerates a story title based on user feedback about a previous title suggestion.
+    
+    Parameters:
+    - concept (str): High-level concept of the story
+    - mainoutline (str): Detailed story outline
+    - previous_title (dict): The previously generated title information
+    - user_feedback (str): User's feedback on the previous title
+    
+    Returns:
+    - dict: JSON object containing the new title and supporting information
+    """
+    title_regeneration_prompt = ChatPromptTemplate.from_messages([
+    SystemMessagePromptTemplate.from_template("""You are an expert title creator with experience in literature, film, and television. You specialize in refining and improving titles based on specific feedback while maintaining thematic resonance and marketability."""),
+    HumanMessagePromptTemplate.from_template("""
+        Generate an improved title for this story based on the user's feedback.
+
+        STORY INFORMATION:
+        - Story concept: {concept}
+        - Story outline: {mainoutline}
+        
+        PREVIOUS TITLE INFORMATION:
+        {previous_title}
+        
+        USER FEEDBACK ON PREVIOUS TITLE:
+        {user_feedback}
+
+        TITLE REQUIREMENTS:
+        1. Address the specific concerns/suggestions in the user feedback
+        2. Capture the essence of the story in a concise, memorable way
+        3. Reflect the genre, tone, and thematic elements
+        4. Create intrigue without revealing major plot twists
+        5. Consider metaphorical/symbolic connections to the narrative
+        6. Be distinct and searchable in the current market
+        7. Avoid generic phrasing or overused title conventions
+        8. Range between 1-7 words (with emphasis on brevity)
+        9. Have potential for brand extension if the story becomes a series
+
+        For the new title option, provide:
+        1. The proposed title
+        2. A brief explanation (40-60 words) of why this title works for the story
+        3. How the title connects to key themes, character arcs, or plot elements
+        4. An assessment of the title's marketability and memorability
+        5. How the new title addresses the specific user feedback
+
+        FORMAT YOUR RESPONSE AS JSON:
+        {{
+            "title": "[New Title Name]",
+            "rationale": "[Explanation]",
+            "thematic_connection": "[Theme connection]",
+            "market_assessment": "[Brief assessment]",
+            "feedback_addressed": "[How this title addresses the user's feedback]"
+        }}
+        """)
+    ])
+    
+    response = llm.invoke(title_regeneration_prompt.format_messages(
+        concept=concept, 
+        mainoutline=mainoutline,
+        previous_title=previous_title,
+        user_feedback=user_feedback
+    ))
+    
+    response = json.loads(response.content)
+    return response
+
 def generate_title_from_outline(concept: str, mainoutline: str):
     title_generation_prompt = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template("""You are an expert title creator with experience in literature, film, and television. You understand how to craft memorable, thematically resonant titles that capture a story's essence while creating intrigue."""),
@@ -223,7 +290,7 @@ def regenerateoutline(mainoutline, genre, refine):
     """
     old_description = "genre of the story :" + str(genre) + '\n' + mainoutline
     changes = refine
-    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"old description:{old_description} and changes:{changes}")]
+    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"###old description:{old_description} \n\n ###changes:{changes}")]
     response = llm.invoke(t)
     followupquestion = response.content.split('# Follow-Up Questions')[1].split(':*')[1].strip()
     mainoutline = response.content.split('# Follow-Up Questions')[0].split('# Updated Narrative Outline')[1]
@@ -312,7 +379,7 @@ def create_arc_outline(outline, number):
         *(Continue similarly for all remaining arcs.)*
 
     """
-    t = [SystemMessage(content=system_prompt), HumanMessage(content= f"description: {outline} and number of arcs: {number}")]
+    t = [SystemMessage(content=system_prompt), HumanMessage(content= f"###description: {outline} \n\n ###number of arcs: {number}")]
     response = llm.invoke(t)
     return response.content.split('## Arc')[1:]
 
@@ -422,19 +489,13 @@ def refine_arc_outline(original_outline, user_feedback):
     *Optional: Any additional suggestions that might further enhance the story*
     """
     
-    # Prepare the input for the LLM
-    input_data = {
-        "original_outline": original_outline,
-        "user_feedback": user_feedback
-    }
-    
-    t = [SystemMessage(content=system_prompt), HumanMessage(content= f"description: {original_outline} and feedback: {user_feedback}")]
+    t = [SystemMessage(content=system_prompt), HumanMessage(content= f"###description: {original_outline} \n\n ###feedback: {user_feedback}")]
     response = llm.invoke(t)
     return response.content.split('## Arc')[1:]
 
 
 
-def detailarc(arcdetail, mainoutline, arctitle):
+def detailarc(arcdetail, mainoutline, arctitle, previous_arcs):
     system_prompt = """
         You are StorySeed, an AI dedicated to deepening narrative elements by expanding on a single narrative arc using both the arc’s overview and the full story outline. Your task is to transform the provided arc detail into a richly detailed narrative section that integrates seamlessly with the overall story.
         Your Responsibilities:
@@ -501,11 +562,11 @@ def detailarc(arcdetail, mainoutline, arctitle):
         # Conclusion
         *Summarize the fully detailed arc and invite the user to provide additional feedback or request further refinements.*
     """
-    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"description:{mainoutline} and this is the overview of one arc of the main story:{arcdetail} you need to make a detail description of this arc , arc name is : {arctitle}")]
+    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"###description: {mainoutline} \n\n ###arc title: {arctitle} \n\n ###overview of the arc: {arcdetail} \n\n  ###Goal: make a detail description of this arc \n\n ###story from previous arcs: {previous_arcs}")]
     response = llm.invoke(t)
     return response.content.split('## Arc')[1:]
 
-def updatearcdetail(previousarcinfo, feedback):
+def updatearcdetail(arcdetail, mainoutline, arctitle, previous_arcs, feedback):
     system_prompt = """
         You are StorySeed, an AI tasked with revising a detailed narrative arc using user feedback alongside the full story outline. Your objective is to adjust and enhance the detailed arc while ensuring it aligns seamlessly with the overall narrative.
         Your Responsibilities:
@@ -567,7 +628,7 @@ def updatearcdetail(previousarcinfo, feedback):
         **Enhanced Thematic and Emotional Details:**  
         *Describe  in detail any new thematic elements or emotional beats introduced as a result of the feedback.*
     """
-    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"this is the detail of one arc of the main story:{previousarcinfo} , the user feedback : {feedback}")]
+    t = [SystemMessage(content=system_prompt),HumanMessage(content= f"### description: {mainoutline} \n\n ### arc title: {arctitle} \n\n ### overview of the arc: {arcdetail} \n\n ### User feedback : {feedback} \n\n ### Goal: update the details of the arc based on the provided user feedback \n\n ### story from previous arcs: {previous_arcs}")]
     response = llm.invoke(t)
     return response.content.split('## Arc')[1:]
 
@@ -788,19 +849,22 @@ def refine_episodes_overview(original_episodes, user_feedback, arc_info, outline
     
     return refined_episodes
 
-def episode_details(episode_title, episode_number, current_arc, outline):
+def episode_details(episode_title, episode_number, current_arc, outline, previous_episode):
     detailed_story_prompt = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template("You are a master storyteller with expertise in visual narrative, character psychology, and dramatic pacing. You specialize in crafting emotionally resonant, visually striking stories that translate seamlessly to screen."),
     HumanMessagePromptTemplate.from_template("""
-        Create a complete, screen-ready story for this episode.
+        ### Create a complete, screen-ready story for this episode.
 
-        Episode information:
+        ### Episode information:
         - Title: {episode_title}
         - Number: {episode_number}
         - Arc context: {current_arc}
         - Story overview: {outline}
+                                             
+        ### Previous episode context:
+        - Summary: {previous_episode}
 
-        Write an immersive, production-ready story that:
+        ### Write an immersive, production-ready story that:
         1. Translates the episode outline into a vivid, cohesive narrative with clear scene breaks
         2. Balances dialogue, action, and description with a rhythm suitable for television
         3. Maintains consistency with established world rules, character voices, and narrative threads
@@ -809,7 +873,7 @@ def episode_details(episode_title, episode_number, current_arc, outline):
         6. Creates emotional resonance through carefully crafted character moments
         7. Incorporates visual storytelling elements that would translate well to screen
 
-        FORMAT GUIDELINES:
+        ### FORMAT GUIDELINES:
         - Begin with a brief "Previously on..." section summarizing essential context (150 words)
         - Structure the story with clear scene headings (LOCATION - TIME OF DAY)
         - Include a mix of dialogue, action blocks, and brief character insights
@@ -821,13 +885,14 @@ def episode_details(episode_title, episode_number, current_arc, outline):
         "episode_title": episode_title,
         "episode_number": episode_number,
         "current_arc": current_arc,
-        "outline": outline
+        "outline": outline,
+        "previous_episode": previous_episode
     }
 
     response = llm.invoke(detailed_story_prompt.format_messages(**episode_input))
     return response.content
 
-def refine_episode_details(ep_details, user_feedback, episode_title, episode_number, current_arc, outline):
+def refine_episode_details(ep_details, user_feedback, episode_title, episode_number, current_arc, outline, previous_episode):
     """
     Refines an existing detailed episode story based on specific user feedback.
     
@@ -845,28 +910,31 @@ def refine_episode_details(ep_details, user_feedback, episode_title, episode_num
     refine_story_prompt = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template("You are a senior television script editor with expertise in narrative revision, dialogue enhancement, and visual storytelling. You excel at refining scripts to elevate their quality while maintaining the original vision."),
     HumanMessagePromptTemplate.from_template("""
-        Refine this detailed episode story based on the specific feedback provided.
+        ### Refine this detailed episode story based on the specific feedback provided.
         
-        ORIGINAL EPISODE STORY:
+        ### ORIGINAL EPISODE STORY:
         {original_story}
         
-        USER FEEDBACK:
+        ### USER FEEDBACK:
         {user_feedback}
         
-        Episode information:
+        ### Episode information:
         - Title: {episode_title}
         - Number: {episode_number}
         - Arc context: {current_arc}
         - Story overview: {outline}
+                                             
+        ### Previous episode context:
+        - Summary: {previous_episode}
 
-        Your task is to:
+        ### Your task is to:
         1. Carefully analyze the original story and the specific feedback
         2. Make targeted improvements while preserving the core narrative structure
         3. Ensure all refinements enhance the story's emotional impact and visual appeal
         4. Address all feedback points comprehensively
         5. Maintain the strengths of the original story while enhancing weaker elements
         
-        Refinement areas to consider:
+        ### Refinement areas to consider:
         - Scene structure: Improve pacing, tension, and flow between scenes
         - Dialogue: Enhance character voices, subtext, and emotional impact
         - Character development: Deepen character moments and relationships
@@ -875,14 +943,14 @@ def refine_episode_details(ep_details, user_feedback, episode_title, episode_num
         - Dramatic beats: Sharpen key emotional and plot moments
         - World consistency: Ensure alignment with established world rules
         
-        FORMAT GUIDELINES:
+        ### FORMAT GUIDELINES:
         - Maintain the original structure with "Previously on..." section and scene headings
         - Preserve the clear scene headings (LOCATION - TIME OF DAY)
         - Retain the balance of dialogue, action, and character insights
         - Keep the compelling hook for the next episode
         - Ensure the refinement feels seamless and organic
         
-        IMPORTANT:
+        ### IMPORTANT:
         - Return the COMPLETE refined story, not just the changes
         - Do not abbreviate or summarize any sections
         - Make substantial, meaningful improvements that truly address the feedback
@@ -896,7 +964,8 @@ def refine_episode_details(ep_details, user_feedback, episode_title, episode_num
         "episode_title": episode_title,
         "episode_number": episode_number,
         "current_arc": current_arc,
-        "outline": outline
+        "outline": outline,
+        "previous_episode": previous_episode
     }
 
     response = llm.invoke(refine_story_prompt.format_messages(**refine_input))
